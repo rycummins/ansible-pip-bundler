@@ -1,0 +1,15 @@
+---
+
+# authentication 
+#aws_secret_access_key: ''
+#aws_access_key_id: ''
+source_keys_from_role: true
+my_ssh_key_name: 'rycummins'
+
+# ec2 stuff
+my_ec2_region: 'us-east-1'
+my_ami_id: 'ami-9887c6e7'
+my_instance_type: 't2.micro'
+
+# pip stuff
+my_pip_package: 'ansible-lint'

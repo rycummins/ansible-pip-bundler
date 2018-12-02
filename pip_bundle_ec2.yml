@@ -1,0 +1,143 @@
+---
+- name: PLAY ONE (provision environment)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: source IAM keys from role
+      include_role:
+        name: rycummins.iam-keys
+      when: source_keys_from_role
+
+    - name: create ssh security group
+      ec2_group:
+        name: allow-all-ssh
+        description: "security group to allow ssh from everywhere"
+        region: "{{ my_ec2_region }}"
+        aws_secret_key: "{{ aws_secret_access_key }}"
+        aws_access_key: "{{ aws_access_key_id }}"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+
+    - name: launch source instance
+      ec2:
+        aws_access_key: "{{ aws_access_key_id }}"
+        aws_secret_key: "{{ aws_secret_access_key }}"
+        key_name: "{{ my_ssh_key_name }}"
+        group:
+          - allow-all-ssh
+        image: "{{ my_ami_id }}"
+        instance_type: "{{ my_instance_type }}"
+        region: "{{ my_ec2_region }}"
+        state: present
+        wait: yes
+      register: create_pip_bundle
+
+    - name: add source instance to host group
+      add_host:
+        hostname: "{{ item.public_ip }}"
+        groupname: target
+      with_items: "{{ create_pip_bundle.instances }}"
+
+    - name: wait for SSH to come up
+      delegate_to: "{{ item.public_dns_name }}"
+      wait_for_connection:
+        delay: 60
+        timeout: 320
+      with_items: "{{ create_pip_bundle.instances }}"
+
+- name: PLAY TWO (create and collect pip bundle)
+  hosts: target
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: enable EPEL repo
+      yum:
+        name: epel-release
+        state: present
+
+    - name: install pip
+      yum:
+        name: python2-pip
+        state: present
+
+    - name: install virtualenv and wheel libraries
+      pip:
+        name:
+          - virtualenv
+          - wheel
+        state: present
+
+    - name: create venv directory
+      file:
+        path: /var/lib/venv/{{ my_pip_package }}
+        state: directory
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: install pip package and dependencies virtualenv
+      pip:
+        name: "{{ my_pip_package }}"
+        state: present
+        virtualenv: /var/lib/venv/{{ my_pip_package }}
+
+    - name: create requirements.txt file
+      shell: /var/lib/venv/{{ my_pip_package }}/bin/pip freeze >/tmp/requirements.txt
+
+    - name: create tempdir for bundle
+      tempfile:
+        state: directory
+        path: /tmp
+        prefix: wheelhouse
+      register: tempdir
+
+    - name: download packages to tempdir
+      command: pip wheel -r /tmp/requirements.txt --wheel-dir="{{ tempdir.path }}"
+
+    - name: create archive
+      archive:
+        path: "{{ tempdir.path }}/*"
+        dest: /tmp/{{ my_pip_package }}_bundled.tar.bz2
+        format: bz2
+
+    - name: fetch bundle
+      fetch:
+        src: /tmp/{{ my_pip_package }}_bundled.tar.bz2
+        dest: /tmp/
+        flat: yes
+
+- name: PLAY THREE (tear down environment)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: source IAM keys from role
+      include_role:
+        name: rycummins.iam-keys
+      when: source_keys_from_role
+
+    - name: terminate instance
+      ec2:
+        aws_access_key: "{{ aws_access_key_id }}"
+        aws_secret_key: "{{ aws_secret_access_key }}"
+        region: "{{ my_ec2_region }}"
+        state: absent
+        instance_ids: "{{ item.id }}"
+        wait: yes
+      with_items: "{{ create_pip_bundle.instances }}"
+
+    - name: delete volume
+      ec2_vol:
+        aws_access_key: "{{ aws_access_key_id }}"
+        aws_secret_key: "{{ aws_secret_access_key }}"
+        region: "{{ my_ec2_region }}"
+        state: absent
+        id: "{{ item['block_device_mapping']['/dev/sda1']['volume_id'] }}"
+      with_items: "{{ create_pip_bundle.instances }}"

@@ -61,7 +61,7 @@ Since the example is sourcing access key values from a role instead of explicitl
 
 Execute the playbook as follows:
 
-    $ ansible-playbook -u centos --private-key /path/to/private.pem --vault-password-file /path/to/ansible_vault.pass pip_bundle_ec2.yml
+    $ ansible-playbook -u centos --private-key /path/to/private.pem --vault-password-file /path/to/ansible_vault.pass -e @vars.yml pip_bundle_ec2.yml
 
 License
 -------
